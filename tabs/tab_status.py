@@ -265,3 +265,19 @@ def render(ctx):
     st.divider()
     st.markdown(f"#### 📈 기간 수익률 현황 — {ctx.basis_label} ~ 오늘 (신한 [1721] 스타일)")
     shared.render_perf(ctx, key="v9_status_perf")
+
+    # ── 자산 비교용 데이터 내보내기 ──
+    st.divider()
+    st.markdown("#### 📥 자산 비교용 데이터 내보내기")
+    detail_rows = SNAP.load_detail_rows(ctx.snap_key)
+    if detail_rows:
+        detail_df = pd.DataFrame(detail_rows)
+        csv_bytes = detail_df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            f"⬇ 자산군·종목별 일별 스냅샷 다운로드 ({ctx.snap_key}, {len(detail_df):,}행)",
+            csv_bytes, file_name=f"asset_snapshots_detail_{ctx.snap_key}.csv",
+            mime="text/csv", key="v9_detail_dl")
+        st.caption("날짜별로 자산군(class)·종목(item) 평가액이 쌓인 원본(long format)입니다. "
+                   "엑셀에서 피벗 테이블로 열=날짜, 행=자산군/종목으로 두면 기간별 비교표를 바로 만들 수 있습니다.")
+    else:
+        st.caption("아직 저장된 일별 스냅샷이 없습니다 — 매일 앱을 열면 자동으로 쌓입니다.")

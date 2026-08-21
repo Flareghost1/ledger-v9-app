@@ -57,6 +57,15 @@ def _load_detail():
         return []
 
 
+def load_detail_rows(owner=None):
+    """일별 자산군·종목 스냅샷 원본 행(long format) — 외부(엑셀 등) 비교용 다운로드에 쓴다.
+    owner를 주면 그 값과 정확히 일치하는 행만 반환."""
+    rows = _load_detail()
+    if owner:
+        rows = [r for r in rows if r["owner"] == owner]
+    return rows
+
+
 def record_detail(owner, by_class, by_item, today=None):
     """오늘자 자산군·항목별 시가 스냅샷 기록(1일 1회). by_class/by_item: {키: 평가액(원)}."""
     today = (today or date.today()).isoformat()
