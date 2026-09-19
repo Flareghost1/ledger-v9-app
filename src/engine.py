@@ -13,27 +13,35 @@ from plotly.subplots import make_subplots
 # ──────────────────────────────── 엔진 (엑셀 v4 이식, 검증 완료) ────────────────────────────────
 DEFAULTS=dict(cap=100_000, init_eq=1.0, fee=0.0004,
     m3_th=-0.03,                       # ① 나스닥 -3% 진입 임계 (수정가능)
-    rb_step=0.025, rb_tick=0.10, rb_vup=0.05,   # ② 리밸 매도스텝/매도비율/반등올인
-    mt_step=0.05, mt_tick=0.10,        # ③④ 말뚝 스텝(단일)/매수비율
-    v_k=2, v_tick=1.0,                 # ⑤⑥ V자 반등 스텝수 / 매수비율(1.0=올인)
+    rb_step=0.025, rb_tick=0.10, rb_vup=0.05,   # ② 리밸 매도스텝/매도비율/반등올인(=2구간×스텝)
+    mt_step=0.05, mt_tick=0.10,        # ③④ 말뚝 스텝/매수비율 (0.05=-50%표, 0.025=-25%표)
+    zirp_auto=True,                    # 제로금리 기간에 진입한 말뚝박기는 자동으로 -25%표(2.5%)
+    v_k=2, v_tick=1.0,                 # ⑤⑥ V자 반등 구간수 / 매수비율(1.0=올인)
+    v_fail=1,                          # V올인 후 '최종 말뚝구간보다 몇 구간 더' 떨어지면 되파는지
     wait1=1, wait2=2, panic_n=4, up_n=8,        # 대기/공황/8일
     # ── 룰 ON/OFF (B0는 항상 ON 고정) ──
     on_A1=True, on_A2=True, on_B1=True, on_B3=True, on_B4=True, on_B5=True,
     on_D1=True, on_D2=True, on_E1=True,
     rebal_on=True)   # (하위호환: rebal_on=False면 A1/A2 동시 OFF)
 
+# 미 연준 제로금리 기간(연방기금금리 0~0.25%). 책: "제로금리일 때 -25%표, 금리 인상 시기 -50%표".
+ZERO_RATE_PERIODS=[("2008-12-16","2015-12-16"),("2020-03-15","2022-03-16")]
+
+def _is_zirp(d):
+    d=pd.Timestamp(d)
+    return any(pd.Timestamp(a)<=d<pd.Timestamp(b) for a,b in ZERO_RATE_PERIODS)
+
 RULE_TABLE=pd.DataFrame([
- ["A1","상시","기준가 대비 −2.5%마다","10% 매도 (래칫)"],
- ["A2","상시","전저점 +5%(2구간) 반등","올인 → 올인가=새 기준가"],
- ["B0","위험 진입","나스닥 −3% 최초","낙폭의 말뚝 사다리 비율로 순조정"],
- ["B1","위험(비제로)","전고점 −5%마다","10% 매수 (래칫)"],
- ["B2","위험(제로금리)","전고점 −2.5%마다","10% 매수"],
- ["B3","위험","전저점 +2말뚝구간 반등","V자 올인"],
- ["B4","위험","V올인 후 전저점 이탈","사다리 복귀 (매도)"],
- ["B5","위험","대기 중 −3% 재발","사다리 복귀 + 대기 리셋"],
+ ["A1","평시","기준가(전고점) 대비 −2.5%마다 (종가)","10% 매도 (래칫)"],
+ ["A2","평시","바닥 구간에서 2구간 위 가격 회복 (종가)","올인 → 그 구간가격=새 기준가"],
+ ["B0","위험 진입","나스닥 −3% (평시 중)","전고점 대비 말뚝 표 비율로 조정. 금리 따라 −25%/−50%표"],
+ ["B1","말뚝박기","전고점 대비 한 구간 더 하락 (장중 저가)","10% 매수 (래칫)"],
+ ["B3","말뚝박기","바닥 구간에서 2구간 위 가격 회복 (종가)","V자 올인 (공황 해제 아님)"],
+ ["B4","V올인 후","최종 말뚝구간보다 1구간 더 하락 (종가)","그 구간 비율로 되팔고 말뚝박기 재개"],
+ ["B5","대기 중","나스닥 −3% 재발","대기기간 재시작. V올인 상태면 매도하지 않음"],
  ["D1","복귀","마지막 −3%일 +1달+1일 (공황 2달+1일)","전량 매수 → 평시"],
- ["D2","복귀","나스닥 8거래일 연속상승","조기 전량 매수"],
- ["E1","공황","1개월 내 −3% 4회","대기 2달+1일"],
+ ["D2","복귀","나스닥 8거래일 연속상승","전량 매수 → 평시 (공황도 해제)"],
+ ["E1","공황","달력상 같은 달에 −3% 4회","대기 2달+1일. 해제(D1/D2) 전까지 유지"],
 ],columns=["번호","국면","트리거","액션"])
 
 def _apply_targets(dates, px, tgt, cap=100_000, fee=0.0004):
@@ -120,7 +128,8 @@ def strat_target(name, dates, px, ix, vix):
         return t
     return np.ones(N)
 
-def run_engine(dates, px, ix, strategy="full", **kw):
+def run_engine(dates, px, ix, strategy="full", low=None, **kw):
+    """low: 일별 장중 저가(선택). 말뚝박기 매수는 장중 기준(4장)이라 주면 그걸로 구간을 잡는다."""
     P={**DEFAULTS,**kw}
     if strategy=="marsam": P["rebal_on"]=False
     dates=pd.to_datetime(pd.Series(dates)).reset_index(drop=True)
@@ -143,57 +152,90 @@ def run_engine(dates, px, ix, strategy="full", **kw):
             out["avg"][i]=px[0]; out["bh"][i]=cap*px[i]/px[0]; out["peak_nv"][i]=pk
             out["target"][i]=1; out["cash"][i]=0; out["q"][i]=px[i]; out["refp"][i]=pk
     else:
-        J=0;MM=0;V=0;REF=px[0];RM=0;Q=px[0];rel=pd.NaT
+        # ── 김장섭 매뉴얼 1~5 + 10~14장 (공황·V자 반등·전고점/기준가) ──
+        # 구간(row)은 항상 전고점(말뚝) 또는 기준가(리밸) 대비로 잰다. "2구간 상승"은 바닥에서
+        # +10%가 아니라 '바닥 구간보다 두 칸 위 가격'이다(4·10·11장: 154.71→163.81, 136.51→154.71).
+        lo_px=np.asarray(low,float) if low is not None else px
+        eps=1e-9
+        rb_rows=max(1,int(round(P["rb_vup"]/P["rb_step"])))   # 리밸 V자 = 2구간(기본)
+        mt_tick=P["mt_tick"]
+        rebal_only=(strategy=="rebal5")
+        J=0;MM=0;V=0;LV=0;REF=px[0];RM=0;Q=px[0];rel=pd.NaT;PAN=0;STEP=step;HIV=px[0]
         cash=cap*(1-P["init_eq"]); sh=cap*P["init_eq"]/px[0]; cost=cap*P["init_eq"]; avg=px[0] if sh>0 else 0
-        peak=px[0]
+        peak=px[0]; mcnt={}
         for i in range(N):
             p=px[i]; peak=max(peak,p); m3=0; upn=0; cnt=0
-            if i>0:
+            lp=min(p, lo_px[i]) if np.isfinite(lo_px[i]) else p
+            if i>0 and not rebal_only:
                 r=ix[i]/ix[i-1]-1; m3=1 if r<=P["m3_th"] else 0
                 upn=(out["up"][i-1]+1) if ix[i]>ix[i-1] else 0
-                lo=dates[i]-pd.Timedelta(days=30)
-                cnt=sum(1 for j in range(i) if out["m3"][j] and dates[j]>=lo)+m3
-            panic=1 if cnt>=P["panic_n"] else 0
+                ym=(dates[i].year,dates[i].month)          # 공황은 달력 월 기준(책 116쪽)
+                if m3: mcnt[ym]=mcnt.get(ym,0)+1
+                cnt=mcnt.get(ym,0)
             Jp,MMp,Vp,REFp,RMp,Qp,relp=J,MM,V,REF,RM,Q,rel
             hold_T=(sh*p)/(cash+sh*p) if (cash+sh*p)>0 else 0.0  # B1 OFF시 홀드용
+            def lvl(price, st_): return int(max(0.0,1-price/peak)/st_+eps)
+            def ratio(m): return min(1.0,m*mt_tick) if P["on_B1"] else hold_T
             rule=""
             if i>0:
-                nd=p/peak-1
                 if m3:
-                    rule+=(("B5 " if P["on_B5"] else "") if Jp==1 else "B0 ")+("E1 " if (panic and P["on_E1"]) else "")
-                    J=1;V=0;MM=max(MMp if Jp==1 else 0,int(max(0,-nd)/step))
-                    rel=dates[i]+pd.DateOffset(months=(P["wait2"] if (panic and P["on_E1"]) else P["wait1"]))+pd.Timedelta(days=1)
-                    REF=REFp;RM=0;Q=min(Qp,p);T=(min(1.0,MM*P["mt_tick"]) if P["on_B1"] else hold_T)
+                    newly_pan=(cnt>=P["panic_n"] and P["on_E1"] and not PAN)
+                    if Jp==0:                               # B0: 평시 → 말뚝박기 진입
+                        STEP=0.025 if (P["zirp_auto"] and _is_zirp(dates[i])) else step
+                        PAN=1 if newly_pan else 0
+                        V=0;MM=lvl(lp,STEP);T=ratio(MM);rule+="B0 "
+                    else:                                   # B5: 대기 중 재발 → 기간만 재시작
+                        if newly_pan: PAN=1
+                        rule+=("B5 " if P["on_B5"] else "")
+                        if Vp==1: T=P["v_tick"]             # 11·13장: V올인 상태면 -3%로는 팔지 않음
+                        else: MM=max(MMp,lvl(lp,STEP));T=ratio(MM)
+                    if newly_pan: rule+="E1 "
+                    J=1
+                    rel=dates[i]+pd.DateOffset(months=(P["wait2"] if PAN else P["wait1"]))+pd.Timedelta(days=1)
+                    RM=0;Q=min(Qp,p)
                 elif Jp==1:
-                    reentry=(P["on_D2"] and upn>=P["up_n"]) or (P["on_D1"] and pd.notna(relp) and dates[i]>=relp)
+                    d2=P["on_D2"] and upn>=P["up_n"]
+                    reentry=d2 or (P["on_D1"] and pd.notna(relp) and dates[i]>=relp)
                     if reentry:
-                        rule+=("D2 " if (P["on_D2"] and upn>=P["up_n"]) else "D1 ")
-                        J=0;V=0;MM=0;REF=p;RM=0;Q=p;T=1.0;rel=pd.NaT
+                        rule+=("D2 " if d2 else "D1 ")
+                        # V올인으로 이미 들고 있던 동안의 고점이 리밸 기준(15장 2022년 3/29 178.96)
+                        REF=max(p,HIV) if Vp==1 else p
+                        J=0;V=0;MM=0;RM=0;Q=p;T=1.0;rel=pd.NaT;PAN=0
                     else:
-                        J=1;MM=max(MMp,int(max(0,-nd)/step));rel=relp;RM=0
-                        if Vp==1:
-                            if p<Qp: V=0;rule+=("B4 " if P["on_B4"] else "");T=(min(1.0,MM*P["mt_tick"]) if P["on_B1"] else hold_T);Q=min(Qp,p);REF=REFp
-                            else: V=1;T=1.0;Q=min(Qp,p);REF=REFp
+                        J=1;rel=relp;RM=0
+                        if Vp==1:                           # 12·13장: 공황 끝까지 홀드, 단 1구간 더 빠지면 복귀
+                            HIV=max(HIV,p)
+                            fail=peak*(1-(LV+P["v_fail"])*STEP)
+                            if P["on_B4"] and p<fail:
+                                V=0;MM=max(LV+P["v_fail"],lvl(lp,STEP));T=ratio(MM);rule+="B4 "
+                            else: V=1;T=P["v_tick"]
+                            Q=min(Qp,p)
                         else:
-                            if P["on_B3"] and Qp>0 and p/Qp-1>=P["v_k"]*step:
-                                V=1;rule+="B3 ";T=P["v_tick"];REF=p;Q=p
+                            MM=max(MMp,lvl(lp,STEP))
+                            vthr=peak*(1-(MM-P["v_k"])*STEP)
+                            if P["on_B3"] and MM>=P["v_k"] and p>=vthr:
+                                V=1;LV=MM;HIV=p;rule+="B3 ";T=P["v_tick"];Q=p
                             else:
-                                V=0;T=(min(1.0,MM*P["mt_tick"]) if P["on_B1"] else hold_T);Q=min(Qp,p);REF=REFp
+                                V=0;T=ratio(MM);Q=min(Qp,p)
                                 if MM>MMp and P["on_B1"]: rule+="B1 "
                 else:
                     J=0;MM=0;V=0;rel=relp
-                    if P["on_A1"]:
-                        if P["on_A2"] and RMp>0 and Qp>0 and p/Qp-1>=P["rb_vup"]:
-                            rule+="A2 ";REF=p;RM=0;Q=p;T=1.0
+                    rst=0.05 if rebal_only else P["rb_step"]
+                    rrows=2 if rebal_only else rb_rows
+                    if P["on_A1"] or rebal_only:
+                        athr=REFp*(1-(RMp-rrows)*rst)
+                        if (P["on_A2"] or rebal_only) and RMp>rrows and p>=athr:
+                            rule+="A2 ";REF=athr;RM=0;Q=p;T=1.0     # 10장: 2구간 상승 지점이 기준가
                         else:
                             REF=max(REFp,p)
-                            RM=0 if p>=REF else max(RMp,int((1-p/REF)/P["rb_step"]))
+                            RM=0 if p>=REF else max(RMp,int((1-p/REF)/rst+eps))
                             if RM>RMp: rule+="A1 "
                             Q=p if p>=REF else min(Qp,p)
                             T=max(0.0,1-RM*P["rb_tick"])
                     else:
                         REF=max(REFp,p);RM=0;Q=p if p>=REF else min(Qp,p);T=1.0
             else: T=P["init_eq"]
+            panic=PAN
             delta=T*(cash+sh*p)-sh*p
             b=max(0.0,min(delta,cash/(1+fee))); s=max(0.0,-delta)
             if s>sh*p: s=sh*p
@@ -305,11 +347,13 @@ def load_data(ticker, start, end):
         if d is None or d.empty: return None
         c=d["Close"]; return c.iloc[:,0] if isinstance(c,pd.DataFrame) else c
     tc=_col(t); xc=_col(x); vc=_col(v); vnc=_col(vn)
+    lc=t["Low"]; lc=lc.iloc[:,0] if isinstance(lc,pd.DataFrame) else lc   # 말뚝박기 장중 판정용
     df=pd.DataFrame({"price":tc,"ixic":xc.reindex(tc.index)})
     df["vix"]=vc.reindex(tc.index) if vc is not None else np.nan
     df["vxn"]=vnc.reindex(tc.index) if vnc is not None else np.nan
+    df["low"]=lc.reindex(tc.index)
     df=df.dropna(subset=["price","ixic"]).reset_index()
-    df.columns=["date","price","ixic","vix","vxn"]
+    df.columns=["date","price","ixic","vix","vxn","low"]
     return df
 
 # ──────────────────────────────── 차트 ────────────────────────────────
@@ -376,11 +420,11 @@ def chart_perf(df,cur="$"):
         legend=dict(orientation="h",y=-0.2),title="③ 총자산 vs 전략 (총자산=주식평가액+현금)")
     return fig
 
-def run_strategy(skey, dates, price, ixic, vix, vxn=None, **params):
+def run_strategy(skey, dates, price, ixic, vix, vxn=None, low=None, **params):
     """전략키 하나로 마삼룰 계열/비교전략 계열을 모두 처리하는 공용 진입점.
     반환 df는 어떤 전략이든 'target'(권고 주식비중 0~1) 컬럼을 공통으로 갖는다."""
     if skey in MARSAM_KEYS:
-        df = run_engine(dates, price, ixic, skey, **params)
+        df = run_engine(dates, price, ixic, skey, low=low, **params)
     else:
         tgt = strat_target(skey, dates, price, ixic, vix)
         df = _apply_targets(dates, price, tgt, cap=params.get("cap", 100_000), fee=params.get("fee", 0.0004))
@@ -410,6 +454,7 @@ def regime_label(row):
 STRATS={
  "🔴 마삼룰 전체 (김장섭)":"full",
  "🔴 마삼룰만 (평시리밸 OFF)":"marsam",
+ "🔵 1등 외 종목 (리밸런싱 5%만, 21장)":"rebal5",
  "⚫ 존버 (Buy & Hold)":"bh",
  "📈 200일 이평 추세 (메브 파버)":"ma200",
  "📈 50/200 골든크로스":"cross",
@@ -419,4 +464,4 @@ STRATS={
  "📊 변동성 타깃팅 20%":"voltarget",
  "😱 VIX 리스크오프":"vixavoid",
 }
-MARSAM_KEYS={"full","marsam","bh"}
+MARSAM_KEYS={"full","marsam","rebal5","bh"}

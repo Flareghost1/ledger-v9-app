@@ -43,6 +43,9 @@ def get_history(ticker, years=3):
 def _vxn_of(data):
     return data["vxn"] if "vxn" in data.columns else data["vix"]
 
+def _low_of(data):
+    return data["low"] if "low" in data.columns else None
+
 @st.cache_data(ttl=600, show_spinner=False)
 def latest_signal(ticker, strat_key="full", years=3, **params):
     """해당 종목에 전략을 적용했을 때 '오늘 시점' 권고 비중/국면/최근 룰 이벤트를 반환."""
@@ -50,7 +53,7 @@ def latest_signal(ticker, strat_key="full", years=3, **params):
     if data is None or len(data) < 30:
         return None
     df = run_strategy(strat_key, data["date"], data["price"], data["ixic"], data["vix"],
-                      vxn=_vxn_of(data), **params)
+                      vxn=_vxn_of(data), low=_low_of(data), **params)
     last = df.iloc[-1]
     events = df[df.get("rule", "") != ""][["date", "price", "rule"]].tail(5) if "rule" in df.columns else pd.DataFrame()
     return dict(
@@ -76,9 +79,11 @@ def whatif_signal(ticker, strat_key="full", years=3, shock_pct=0.0, shock_index=
     new_row["price"] = ext["price"].iloc[-1] * (1 + shock_pct)
     if shock_index:
         new_row["ixic"] = ext["ixic"].iloc[-1] * (1 + shock_pct)
+    if "low" in ext.columns:
+        new_row["low"] = new_row["price"]      # 가상의 다음날: 장중 저가 = 가정 종가
     ext.loc[len(ext)] = [new_row[c] for c in ext.columns]
     df = run_strategy(strat_key, ext["date"], ext["price"], ext["ixic"], ext["vix"],
-                      vxn=_vxn_of(ext), **params)
+                      vxn=_vxn_of(ext), low=_low_of(ext), **params)
     before = df.iloc[-2]; after = df.iloc[-1]
     stats = whatif_stats(data, shock_pct, shock_index)
     return dict(df=df, before=before, after=after,

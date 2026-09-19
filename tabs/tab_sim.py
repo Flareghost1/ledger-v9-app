@@ -67,7 +67,8 @@ def _section_trend(ctx, tradable):
         st.error("데이터 조회 실패")
         return
     df = v6.run_strategy("full", data["date"], data["price"], data["ixic"], data["vix"],
-                         vxn=data["vxn"] if "vxn" in data else None)
+                         vxn=data["vxn"] if "vxn" in data else None,
+                         low=data["low"] if "low" in data else None)
     idx, idx_name, cur = v6.market_of(tk)
     fig = v6.chart_trend(df, tk, idx_name, cur)
 
@@ -112,7 +113,10 @@ def _compare_panel(ctx, key, default_ticker):
         P["rb_tick"] = p1.number_input("② 리밸 매도비율(%)", 5.0, 50.0, 10.0, 5.0, key=f"v9cmp_rt{key}") / 100
         P["rb_vup"] = p2.number_input("평시 반등올인(%)", 1.0, 20.0, 5.0, 0.5, key=f"v9cmp_vu{key}") / 100
         P["mt_step"] = p3.number_input("③ 말뚝 스텝(%)", 1.0, 20.0, 5.0, 0.5, key=f"v9cmp_ms{key}",
-                                       help="제로금리면 2.5, 비제로면 5") / 100
+                                       help="금리 인상기(-50%표) 기본 5. 아래 '제로금리 자동'이 켜져 있으면 "
+                                            "제로금리 기간에 시작된 말뚝박기는 2.5(-25%표)로 자동 전환") / 100
+        P["zirp_auto"] = st.checkbox("제로금리 기간 자동 -25%표 (2008.12~2015.12, 2020.03~2022.03)", True,
+                                     key=f"v9cmp_zirp{key}")
         p4, p5, p6 = st.columns(3)
         P["mt_tick"] = p4.number_input("④ 말뚝 매수비율(%)", 5.0, 50.0, 10.0, 5.0, key=f"v9cmp_mt{key}") / 100
         P["v_k"] = p5.number_input("⑤ V자 반등 스텝수", 1, 6, 2, 1, key=f"v9cmp_vk{key}")
@@ -128,7 +132,7 @@ def _compare_panel(ctx, key, default_ticker):
         P["on_B3"] = r4.checkbox("B3 V자올인", True, key=f"v9cmp_B3{key}")
         P["on_B4"] = r5.checkbox("B4 V실패복귀", True, key=f"v9cmp_B4{key}", disabled=not P["on_B3"])
         r6, r7, r8, r9, _r10 = st.columns(5)
-        P["on_B5"] = r6.checkbox("B5 −3%재발복귀", True, key=f"v9cmp_B5{key}")
+        P["on_B5"] = r6.checkbox("B5 −3%재발(기간 재시작)", True, key=f"v9cmp_B5{key}")
         P["on_D1"] = r7.checkbox("D1 기간재매수", True, key=f"v9cmp_D1{key}")
         P["on_D2"] = r8.checkbox("D2 8거래일재매수", True, key=f"v9cmp_D2{key}")
         P["on_E1"] = r9.checkbox("E1 공황(2달)", True, key=f"v9cmp_E1{key}")
@@ -149,7 +153,7 @@ def _compare_panel(ctx, key, default_ticker):
         st.error(f"'{ticker}' 데이터를 가져올 수 없습니다 (티커/기간 확인)")
         return
     df = v6.run_strategy(v6.STRATS[strat], data["date"], data["price"], data["ixic"], data["vix"],
-                         vxn=data.get("vxn"), cap=cap, **P)
+                         vxn=data.get("vxn"), low=data.get("low"), cap=cap, **P)
     ret = df["tot"].iloc[-1] / cap - 1
     bret = df["bh"].iloc[-1] / cap - 1
     mdd, bmdd = df["dd"].min(), df["bh_dd"].min()
