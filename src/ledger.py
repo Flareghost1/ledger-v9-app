@@ -185,7 +185,11 @@ class Ledger:
             # 포지션에 대한 현금성 이벤트일 뿐이라 여기서 ccy를 건드리면, 예를 들어 USD 주식의
             # 배당을 원화로 환산해 ccy=KRW로 기록한 거래 한 줄이 그 주식의 통화를 뒤바꿔
             # 평가액 계산 시 환율 적용을 누락시키는 사고가 난다(실제 재현됨).
-            if typ not in ("DIVIDEND", "INTEREST", "COUPON", "FEE", "TAX", "BALANCE"):
+            # REVALUE/CORP_ACTION도 마찬가지다 — 가격만 재확정하는 거래라 ccy 입력칸을 관례상
+            # KRW로 비워 써도(평가금액 원화 표기가 흔해서) 포지션 통화가 뒤바뀌면 안 된다
+            # (브라질국채 REVALUE 행에 ccy=KRW를 잘못 넣었더니 환율 곱셈이 통째로 빠져
+            #  평가액이 -99.7%로 무너진 사고로 재현됨, 2026-09-28).
+            if typ not in ("DIVIDEND", "INTEREST", "COUPON", "FEE", "TAX", "BALANCE", "REVALUE", "CORP_ACTION"):
                 P["ccy"] = ccy; P["asset_class"] = acls
             if todo or low_conf:
                 P["has_todo"] = True
