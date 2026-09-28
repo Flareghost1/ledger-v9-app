@@ -244,7 +244,7 @@ def comprehensive_income_tax(other_income, fin_income, threshold=FIN_INCOME_THRE
 def financial_income_full(ledger, positions=None, fx=None, today=None,
                           threshold=FIN_INCOME_THRESHOLD, other_income=None):
     """v8 세금리포트용: 금융소득 3분류(비과세/분리과세/종합과세) × (YTD/연말예상) + 추가납부세액.
-    연말예상 = YTD 실현 + 잔여 지급월 예상(cashflow.project()가 원장 이력에서 학습한 스케줄 재사용).
+    연말예상 = YTD 실현 + 잔여 지급월 예상(cashflow.project()의 하드코딩 배당표 기반 스케줄 재사용).
     other_income=None이면 data/other_income.csv에서 자동 로드."""
     today = _d(today) or date.today()
     year = today.year
@@ -263,7 +263,7 @@ def financial_income_full(ledger, positions=None, fx=None, today=None,
     est_rest_exempt = est_rest_taxable = 0.0
     if positions is not None and fx is not None:
         import cashflow
-        cf = cashflow.project(positions, ledger.income)
+        cf = cashflow.project(positions, ledger.income, fx)
         for r in cf["rows"]:
             if not r["months"]:
                 continue  # 만기/일시(ELB 등)는 지급 시점 불확실 → 연말예상에서 제외

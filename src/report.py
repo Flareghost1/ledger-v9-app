@@ -44,7 +44,7 @@ def build(ledger, owner="본인", today=None):
     nq = prices.index_snapshot("^IXIC")
     taxsum = tx.summary(ledger, today)
     income_hist = [i for i in ledger.income if all_owners or i["owner"] == owner]
-    cf = cashflow.project(pos, income_hist)
+    cf = cashflow.project(pos, income_hist, fx)
 
     L = []
     L.append(f"# 자산 리포트 {today.isoformat()} ({owner_label})")

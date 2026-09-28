@@ -33,7 +33,7 @@ def _actual_monthly(ctx, year):
 
 
 def _income_history(ctx):
-    """예상 스케줄 학습용 — 소유자·종목 필터 범위, 연도 제한 없이 전체 이력(지급월 패턴 학습에 필요)."""
+    """하드코딩 예상표 검증용 — 소유자·종목 필터 범위, 연도 제한 없이 전체 이력(누락·신규종목 판정에 필요)."""
     out = []
     for i in ctx.L.income:
         if i["owner"] not in ctx.owner_set:
@@ -46,7 +46,7 @@ def _income_history(ctx):
 
 def render(ctx):
     year = date.today().year
-    cf = cashflow.project(ctx.pos_f, _income_history(ctx))
+    cf = cashflow.project(ctx.pos_f, _income_history(ctx), ctx.fx)
     actual, actual_detail = _actual_monthly(ctx, year)
 
     m = st.columns(4)
@@ -55,6 +55,18 @@ def render(ctx):
     m[2].metric("월평균(세후)", f"₩{cf['annual_net']/12:,.0f}")
     m[3].metric(f"{year} 실제 수령 누계", f"₩{sum(actual):,.0f}",
                 f"예상 YTD ₩{sum(cf['monthly'][:date.today().month]):,.0f} 대비", delta_color="off")
+
+    # 하드코딩 표 vs 원장 실제 대조 알림 (신규종목·누락·금액차이)
+    if cf["alerts"]:
+        n_new = sum(1 for a in cf["alerts"] if a["type"] == "신규종목")
+        n_miss = sum(1 for a in cf["alerts"] if a["type"] == "누락")
+        n_diff = sum(1 for a in cf["alerts"] if a["type"] == "금액차이")
+        with st.expander(f"⚠️ 검증 알림 {len(cf['alerts'])}건 "
+                         f"(🆕 신규종목 {n_new} · ❌ 누락 {n_miss} · ⚠️ 금액차이 {n_diff})", expanded=True):
+            for a in cf["alerts"]:
+                st.write(a["msg"])
+    else:
+        st.caption("✅ 하드코딩 예상표와 원장 실제 지급 이력 대조 결과 이상 없음.")
 
     # §18: 예상(스케줄) vs 실제 수령 그룹 막대 + §19: 클릭 시 그 달 구성
     fig = go.Figure()
@@ -133,12 +145,12 @@ def render(ctx):
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, column_config={
         "연현금흐름": st.column_config.NumberColumn(format="₩%,.0f"),
     })
-    st.caption(f"예상 = 원장에 실제 찍힌 지급 이력에서 학습(지급월·최근 금액을 다음 1년에 반복 가정, "
-               f"하드코딩 없음 — 새 배당·이자가 기록되면 다음 새로고침부터 자동 반영) · "
+    st.caption(f"예상 = 실제 공시·broker 자료로 확인한 배당률/쿠폰율을 하드코딩한 표(cashflow.INCOME_TABLE) 기준 · "
+               f"원장 실제 지급 이력과 자동 대조해서 위 검증 알림으로 차이를 표시함 · "
                f"실제 = 원장 DIVIDEND/INTEREST/COUPON 실수령({ctx.owner_label}).")
 
     st.markdown("##### 🧾 실제 입금 내역")
-    st.caption("어떤 계좌로 언제 얼마가 들어왔는지 — 위 '예상'이 학습하는 원본 데이터입니다.")
+    st.caption("어떤 계좌로 언제 얼마가 들어왔는지 — 위 검증 알림이 대조하는 원본 데이터입니다.")
     hist = sorted(_income_history(ctx), key=lambda i: i["date"], reverse=True)
     if hist:
         hdf = pd.DataFrame([dict(
