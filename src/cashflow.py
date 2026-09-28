@@ -1,62 +1,57 @@
 # -*- coding: utf-8 -*-
 """
 cashflow.py — 배당·쿠폰 예상 현금흐름 (SPEC §src, 우선순위 6)
-원장 포지션 + 실시간 평가액을 바탕으로 연간/월별 현금흐름을 추정한다.
-분배율·지급월은 아래 INCOME_TABLE(자산별)에 박아둔다. 상장 인컴상품은
-'실시간 평가액 × 분배율', 개별주식은 '보유수량 × 주당배당 × 환율'로 계산.
-"""
-import numpy as np
 
-# asset_id -> dict(kind, rate 또는 dps, months[list], tax_exempt)
-#   kind='pct'  → 연현금흐름 = 실시간평가액 × rate
-#   kind='dps'  → 연현금흐름 = 수량 × dps(USD) × fx
-#   kind='face' → 연현금흐름 = 취득원가(원) × rate  (채권 표면/쿠폰)
-INCOME_TABLE = {
-    "AAPL":       dict(kind="dps", dps=1.04, months=[2,5,8,11], tax_exempt=False, label="AAPL 배당"),
-    "GOOG":       dict(kind="dps", dps=1.06, months=[3,6,9,12], tax_exempt=False, label="GOOG 배당"),
-    "MSFT":       dict(kind="dps", dps=3.64, months=[3,6,9,12], tax_exempt=False, label="MSFT 배당"),
-    "494300.KS":  dict(kind="pct", rate=0.18, months=list(range(1,13)), tax_exempt=False, label="나스닥100 커버드콜"),
-    "483280.KS":  dict(kind="pct", rate=0.15, months=list(range(1,13)), tax_exempt=False, label="AI테크 커버드콜"),
-    "088980.KS":  dict(kind="pct", rate=0.065, months=[2,8], tax_exempt=False, label="맥쿼리인프라"),
-    "BOND_KR.국고채015003609": dict(kind="face", rate=0.015, months=[3,9], tax_exempt=False, label="국고채 이표"),
-    "BOND_FX.브라질2037": dict(kind="face", rate=0.10, months=[1,7], tax_exempt=True, label="브라질2037 쿠폰"),
-    "BOND_FX.브라질2035신규": dict(kind="face", rate=0.10, months=[1,7], tax_exempt=True, label="브라질2035 쿠폰"),
-    "BOND_FX.브라질2033": dict(kind="face", rate=0.10, months=[1,7], tax_exempt=True, label="브라질2033 쿠폰"),
-    "BOND_FX.브라질2031": dict(kind="face", rate=0.10, months=[1,7], tax_exempt=True, label="브라질2031 쿠폰"),
-    "BOND_FX.브라질2029": dict(kind="face", rate=0.10, months=[1,7], tax_exempt=True, label="브라질2029 쿠폰"),
-    "BOND_FX.브라질2035기존": dict(kind="face", rate=0.10, months=[1,7], tax_exempt=True, label="브라질2035기존 쿠폰"),
-    "ELS.교보ELB12532": dict(kind="face", rate=0.04, months=[], tax_exempt=False, label="교보 ELB(만기)"),
-}
+하드코딩된 배당표(INCOME_TABLE) 대신, 원장에 실제로 찍힌 DIVIDEND/INTEREST/
+COUPON 이력에서 직접 학습한다 — 그 (계좌,종목)에 실제 지급된 달(月)들과
+가장 최근 지급액을 그대로 앞으로 1년에도 반복된다고 가정해 예상치를 만든다.
+그래서 원장에 새 배당·이자가 기록되는 순간부터(다음 새로고침부터, 코드 수정
+없이) 예상에 자동 반영되고, 지급 이력이 아직 없는 종목은 예상에서 자동으로
+빠진다(수동으로 등록/삭제할 필요가 없다).
+
+한계: 지급 이력이 1건뿐인 종목은 그 1건의 달만으로 '연 1회'라고 가정한다 —
+실제 주기(분기·반기 등)를 몰라서 생기는 보수적인 추정이며, 다음 지급이
+찍히면 자동으로 정확해진다. 배당락 시점의 보유수량 변화도 반영 못 하고
+'가장 최근 지급액'을 그대로 쓴다 — 이 역시 다음 지급이 찍히면 갱신된다.
+"""
+
 DIV_TAX = 0.154
 
-def project(positions, fx, value_fn):
-    """포지션 리스트 → 현금흐름 항목/월별/연간 요약.
-    value_fn(p)=평가액(원) 을 주입받아 실시간 평가액 기준으로 계산."""
+
+def project(positions, income_history):
+    """positions: ctx.pos_f 등 (owner,account,asset_id) 단위 포지션 리스트.
+    income_history: 그 소유자·필터 범위의 ctx.L.income (account 필드 포함, 전체 기간 — 연도로
+    자르면 안 된다. 지급월 패턴을 과거 전체에서 학습해야 하기 때문).
+    반환: rows(자산별 예상), monthly(1~12월 배분), annual_gross/net, div_tax."""
+    by_key = {}
+    for i in income_history:
+        by_key.setdefault((i.get("account"), i["asset_id"]), []).append(i)
+    for v in by_key.values():
+        v.sort(key=lambda i: i["date"])
+
     rows = []
+    seen = set()
     for p in positions:
-        info = INCOME_TABLE.get(p["asset_id"])
-        if not info:
+        key = (p["account"], p["asset_id"])
+        hist = by_key.get(key)
+        if not hist or key in seen:
             continue
-        if info["kind"] == "dps":
-            annual = p["qty"] * info["dps"] * fx
-            basis = f"{p['qty']:.0f}주 × ${info['dps']}/주 × {fx:,.0f}"
-        elif info["kind"] == "pct":
-            v = value_fn(p)
-            annual = v * info["rate"]
-            basis = f"평가액 ₩{v:,.0f} × {info['rate']:.1%}"
-        else:  # face
-            annual = p["cost_krw"] * info["rate"]
-            basis = f"원금 ₩{p['cost_krw']:,.0f} × {info['rate']:.1%}"
-        rows.append(dict(asset_id=p["asset_id"], label=info["label"], annual=annual,
-                         months=info["months"], tax_exempt=info["tax_exempt"], basis=basis))
-    monthly = np.zeros(12)
+        seen.add(key)
+        months = sorted({int(str(i["date"])[5:7]) for i in hist})
+        last = hist[-1]
+        annual = last["amount_krw"] * len(months)
+        rows.append(dict(
+            asset_id=p["asset_id"], account=p["account"], label=p["name"],
+            annual=annual, months=months, tax_exempt=bool(last["tax_exempt"]),
+            basis=f"최근 지급 {last['date']} ₩{last['amount_krw']:,.0f} × 연 {len(months)}회 "
+                  f"(지급월 {','.join(f'{mm}월' for mm in months)} · 이력 {len(hist)}건 학습)"))
+
+    monthly = [0.0] * 12
     for r in rows:
-        if r["months"]:
-            per = r["annual"] / len(r["months"])
-            for m in r["months"]:
-                monthly[m-1] += per
+        per = r["annual"] / len(r["months"])
+        for mm in r["months"]:
+            monthly[mm - 1] += per
     annual_gross = sum(r["annual"] for r in rows)
-    annual_net = sum(r["annual"] * (1 if r["tax_exempt"] else (1-DIV_TAX)) for r in rows)
-    lump = sum(r["annual"] for r in rows if not r["months"])
+    annual_net = sum(r["annual"] * (1 if r["tax_exempt"] else (1 - DIV_TAX)) for r in rows)
     return dict(rows=rows, monthly=monthly, annual_gross=annual_gross,
-                annual_net=annual_net, lump=lump, div_tax=DIV_TAX)
+                annual_net=annual_net, div_tax=DIV_TAX)

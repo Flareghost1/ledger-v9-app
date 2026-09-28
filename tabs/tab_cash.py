@@ -32,9 +32,21 @@ def _actual_monthly(ctx, year):
     return monthly, detail
 
 
+def _income_history(ctx):
+    """예상 스케줄 학습용 — 소유자·종목 필터 범위, 연도 제한 없이 전체 이력(지급월 패턴 학습에 필요)."""
+    out = []
+    for i in ctx.L.income:
+        if i["owner"] not in ctx.owner_set:
+            continue
+        if ctx.asset_filter_on and i["asset_id"] not in ctx.sel_assets:
+            continue
+        out.append(i)
+    return out
+
+
 def render(ctx):
     year = date.today().year
-    cf = cashflow.project(ctx.pos_f, ctx.fx, lambda p: p["_v"])
+    cf = cashflow.project(ctx.pos_f, _income_history(ctx))
     actual, actual_detail = _actual_monthly(ctx, year)
 
     m = st.columns(4)
@@ -121,5 +133,21 @@ def render(ctx):
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, column_config={
         "연현금흐름": st.column_config.NumberColumn(format="₩%,.0f"),
     })
-    st.caption(f"예상 = 배당스케줄(INCOME_TABLE) 이론치 · 실제 = 원장 DIVIDEND/INTEREST/COUPON 실수령({ctx.owner_label}). "
-               "일시성(ELB 등) ₩{:,.0f}는 월 배분 없이 별도.".format(cf["lump"]))
+    st.caption(f"예상 = 원장에 실제 찍힌 지급 이력에서 학습(지급월·최근 금액을 다음 1년에 반복 가정, "
+               f"하드코딩 없음 — 새 배당·이자가 기록되면 다음 새로고침부터 자동 반영) · "
+               f"실제 = 원장 DIVIDEND/INTEREST/COUPON 실수령({ctx.owner_label}).")
+
+    st.markdown("##### 🧾 실제 입금 내역")
+    st.caption("어떤 계좌로 언제 얼마가 들어왔는지 — 위 '예상'이 학습하는 원본 데이터입니다.")
+    hist = sorted(_income_history(ctx), key=lambda i: i["date"], reverse=True)
+    if hist:
+        hdf = pd.DataFrame([dict(
+            날짜=i["date"], 계좌=i.get("account") or "-",
+            자산군=cls_of.get(i["asset_id"], "기타"),
+            종목=name_of.get(i["asset_id"], i["asset_id"]),
+            금액=i["amount_krw"], 세금=_tax_kind(i["asset_id"], i["tax_exempt"]),
+        ) for i in hist])
+        st.dataframe(hdf, width="stretch", hide_index=True, height=min(400, 60 + 36 * len(hdf)),
+                     column_config={"금액": st.column_config.NumberColumn(format="₩%,.0f")})
+    else:
+        st.caption("아직 기록된 입금 내역이 없습니다.")

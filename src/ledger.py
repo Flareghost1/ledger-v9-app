@@ -291,7 +291,7 @@ class Ledger:
                 else:
                     cash[(owner, cash_acct, ccy)] += (amount - tax)
                 exempt = self.assets.get(aid, {}).get("tax_exempt", "N") == "Y"
-                income.append(dict(date=t["date"], owner=owner, asset_id=aid, type=typ,
+                income.append(dict(date=t["date"], owner=owner, account=acct, asset_id=aid, type=typ,
                                    amount_krw=amount_krw, tax_exempt=exempt))
             elif typ in ("FEE", "TAX"):
                 cash[(owner, cash_acct, ccy)] -= amount
