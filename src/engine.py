@@ -335,10 +335,35 @@ def market_of(ticker):
         return "^KS11","코스피","₩"     # 코스피 종목 → 코스피 신호
     return "^IXIC","나스닥","$"          # 그 외 → 나스닥 신호
 
+HIGH_YIELD_THRESHOLD = 0.08  # 최근 1년 분배금/현재가 비율이 이 이상이면 '고배당(월분배 등)'으로 판정
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _is_high_yield(ticker):
+    """고배당·월분배 ETF(커버드콜 등) 판별. yfinance의 auto_adjust=True는 배당을 소급
+    반영해서 과거 종가를 깎는데, 매달 1~2%씩 분배하는 상품은 이게 누적되면 과거 주가가
+    실제 거래가보다 크게 낮게 왜곡된다(확인: 483280.KS·494300.KS, 2026-09-30).
+    이런 종목은 원종가(auto_adjust=False)를 써야 실제 거래가·내 평단가와 비교가 맞는다.
+    반대로 일반 종목은 액면분할 왜곡을 막기 위해 계속 auto_adjust=True를 쓴다."""
+    try:
+        tk = yf.Ticker(ticker)
+        divs = tk.dividends
+        if divs is None or divs.empty:
+            return False
+        cutoff = divs.index[-1] - pd.Timedelta(days=365)
+        recent_total = float(divs[divs.index >= cutoff].sum())
+        hist = tk.history(period="5d", auto_adjust=True)
+        if hist.empty:
+            return False
+        price = float(hist["Close"].dropna().iloc[-1])
+        return bool(price > 0 and recent_total / price > HIGH_YIELD_THRESHOLD)
+    except Exception:
+        return False
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data(ticker, start, end):
     idx,idx_name,cur=market_of(ticker)
-    t=yf.download(ticker,start=start,end=end,auto_adjust=True,progress=False)
+    t=yf.download(ticker,start=start,end=end,auto_adjust=not _is_high_yield(ticker),progress=False)
     x=yf.download(idx,start=start,end=end,auto_adjust=True,progress=False)
     v=yf.download("^VIX",start=start,end=end,auto_adjust=True,progress=False)
     vn=yf.download("^VXN",start=start,end=end,auto_adjust=True,progress=False)  # 나스닥100 변동성지수

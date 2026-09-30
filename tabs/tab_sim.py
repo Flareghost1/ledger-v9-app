@@ -159,6 +159,12 @@ def _compare_panel(ctx, key, default_ticker):
     mdd, bmdd = df["dd"].min(), df["bh_dd"].min()
     name = v6.get_name(ticker)
     st.markdown(f"**📌 {name}** ({ticker}) · 신호지수 {idx_name}")
+    if v6._is_high_yield(ticker):
+        st.caption("🟢 원종가(수정 안 함) 사용 — 최근 1년 분배금이 현재가의 "
+                   f"{v6.HIGH_YIELD_THRESHOLD:.0%} 이상인 고배당·월분배 상품으로 판정돼, "
+                   "배당 소급조정 없이 실제 거래가 그대로 차트·백테스트에 반영합니다.")
+    else:
+        st.caption("⚪ 수정종가(배당·액면분할 조정) 사용")
     m = st.columns(3)
     m[0].metric("전략 수익률", f"{ret:+.1%}", f"{ret-bret:+.1%}p vs 존버({bret:+.1%})")
     m[1].metric("전략 MDD", f"{mdd:.1%}", f"{mdd-bmdd:+.1%}p vs 존버({bmdd:.1%})", delta_color="off")
