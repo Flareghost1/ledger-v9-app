@@ -1,0 +1,16 @@
+# 실제 금융 데이터는 절대 커밋하지 않는다 — 샘플(가짜 데모) 데이터만 코드와 함께 배포한다.
+data/본인/
+data/app_config.json
+out/
+
+# 인증정보 — Streamlit secrets는 배포 플랫폼이 별도 관리(Settings > Secrets), 로컬 파일은 git에 안 올림.
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db

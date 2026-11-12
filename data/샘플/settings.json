@@ -1,0 +1,22 @@
+{
+  "fin_income_threshold": 20000000,
+  "ips_goals": [
+    {
+      "id": 1,
+      "label": "브라질국채 원금 4억",
+      "metric": "asset_class_sum",
+      "match": "BOND_FX",
+      "target": 400000000,
+      "target_by_year": null
+    },
+    {
+      "id": 2,
+      "label": "월배당 ETF 비중(494300+483280)",
+      "metric": "position_weight_pct",
+      "match": "494300.KS",
+      "target": 20,
+      "target_by_year": null
+    }
+  ],
+  "strategy_defaults": {}
+}
